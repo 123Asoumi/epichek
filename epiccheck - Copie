@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""
+EpicCheck - Epitech Coding Style Checker
+Vérifie la conformité du code C avec le coding style Epitech
+
+Usage:
+    epiccheck <directory_or_file>...
+    epiccheck --help
+
+Exit codes:
+    0  - Tout est conforme
+    84 - Des violations ont été détectées
+    1  - Erreur d'exécution
+"""
+
+import sys
+import os
+import argparse
+from pathlib import Path
+from typing import List, Tuple, Optional
+import re
+
+# ============================================================================
+# CONSTANTS
+# ============================================================================
+
+# Niveaux de gravité
+FATAL = "FATAL"
+MAJOR = "MAJOR"
+MINOR = "MINOR"
+INFO = "INFO"
+
+# Couleurs pour le terminal
+class Colors:
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    GREEN = '\033[92m'
+    BLUE = '\033[94m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+
+# ============================================================================
+# VIOLATION CLASS
+# ============================================================================
+
+class Violation:
+    def __init__(self, rule: str, severity: str, file: str, line: int, 
+                 column: int, message: str):
+        self.rule = rule
+        self.severity = severity
+        self.file = file
+        self.line = line
+        self.column = column
+        self.message = message
+    
+    def __str__(self):
+        severity_color = {
+            FATAL: Colors.RED + Colors.BOLD,
+            MAJOR: Colors.RED,
+            MINOR: Colors.YELLOW,
+            INFO: Colors.BLUE
+        }.get(self.severity, Colors.RESET)
+        
+        return (f"{severity_color}{self.severity}{Colors.RESET} "
+                f"[{self.rule}] {self.file}:{self.line}:{self.column} - "
+                f"{self.message}")
+
+# ============================================================================
+# FILE ANALYZERS
+# ============================================================================
+
+class CFileAnalyzer:
+    """Analyseur pour les fichiers C (.c et .h)"""
+    
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self.violations: List[Violation] = []
+        
+        with open(filepath, 'rb') as f:
+            self.raw_content = f.read()
+        
+        try:
+            self.content = self.raw_content.decode('utf-8')
+        except UnicodeDecodeError:
+            self.content = self.raw_content.decode('latin-1')
+        
+        self.lines = self.content.split('\n')
+    
+    def analyze(self) -> List[Violation]:
+        """Lance toutes les vérifications"""
+        self.check_header()
+        self.check_file_extension()
+        self.check_line_endings()
+        self.check_trailing_spaces()
+        self.check_leading_trailing_lines()
+        self.check_line_length()
+        self.check_function_length()
+        self.check_indentation()
+        self.check_spaces()
+        self.check_goto()
+        self.check_multiline_backslash()
+        self.check_final_newline()
+        
+        return self.violations
+    
+    def add_violation(self, rule: str, severity: str, line: int, 
+                     column: int, message: str):
+        """Ajoute une violation à la liste"""
+        self.violations.append(
+            Violation(rule, severity, self.filepath, line, column, message)
+        )
+    
+    # ========================================================================
+    # C-G RULES - Global scope
+    # ========================================================================
+    
+    def check_header(self):
+        """C-G1: Vérifie la présence du header Epitech"""
+        if not self.lines:
+            return
+        
+        expected_start = "/*\n** EPITECH PROJECT"
+        actual_start = '\n'.join(self.lines[:2])
+        
+        if not actual_start.startswith(expected_start):
+            self.add_violation(
+                "C-G1", MAJOR, 1, 1,
+                "Missing or incorrect EPITECH header"
+            )
+    
+    def check_file_extension(self):
+        """C-O2: Vérifie l'extension du fichier"""
+        if not (self.filepath.endswith('.c') or self.filepath.endswith('.h')):
+            self.add_violation(
+                "C-O2", MAJOR, 1, 1,
+                f"Invalid file extension (must be .c or .h)"
+            )
+    
+    def check_line_endings(self):
+        """C-G6: Vérifie les fins de ligne (UNIX style)"""
+        if b'\r\n' in self.raw_content:
+            self.add_violation(
+                "C-G6", MINOR, 1, 1,
+                "Windows line endings detected (use UNIX \\n)"
+            )
+        
+        if b'\r' in self.raw_content and b'\r\n' not in self.raw_content:
+            self.add_violation(
+                "C-G6", MINOR, 1, 1,
+                "Mac classic line endings detected (use UNIX \\n)"
+            )
+    
+    def check_trailing_spaces(self):
+        """C-G7: Vérifie les espaces en fin de ligne"""
+        for i, line in enumerate(self.lines, 1):
+            if line.rstrip() != line and line.strip():
+                self.add_violation(
+                    "C-G7", MINOR, i, len(line.rstrip()) + 1,
+                    "Trailing spaces detected"
+                )
+    
+    def check_leading_trailing_lines(self):
+        """C-G8: Vérifie les lignes vides au début et à la fin"""
+        if self.lines and self.lines[0].strip() == '':
+            self.add_violation(
+                "C-G8", MINOR, 1, 1,
+                "Leading empty lines detected"
+            )
+        
+        # Compter les lignes vides à la fin
+        trailing_empty = 0
+        for line in reversed(self.lines):
+            if line.strip() == '':
+                trailing_empty += 1
+            else:
+                break
+        
+        if trailing_empty > 1:
+            self.add_violation(
+                "C-G8", MINOR, len(self.lines) - trailing_empty + 1, 1,
+                f"Too many trailing empty lines ({trailing_empty}, max 1)"
+            )
+    
+    def check_multiline_backslash(self):
+        """C-G6: Vérifie l'absence de backslash pour les retours à la ligne"""
+        for i, line in enumerate(self.lines, 1):
+            if line.rstrip().endswith('\\') and not self.is_in_macro(i):
+                self.add_violation(
+                    "C-G6", MINOR, i, len(line.rstrip()),
+                    "Do not use backslash for line breaks (except in macros)"
+                )
+    
+    def check_final_newline(self):
+        """C-A3: Vérifie la présence d'un retour à la ligne final"""
+        if not self.content.endswith('\n'):
+            self.add_violation(
+                "C-A3", MINOR, len(self.lines), 1,
+                "File must end with a newline"
+            )
+    
+    # ========================================================================
+    # C-F RULES - Functions
+    # ========================================================================
+    
+    def check_line_length(self):
+        """C-F3: Vérifie la longueur des lignes (max 80 colonnes)"""
+        for i, line in enumerate(self.lines, 1):
+            # Convertir les tabs en espaces (1 tab = 4 espaces)
+            expanded = line.replace('\t', '    ')
+            if len(expanded) > 80:
+                self.add_violation(
+                    "C-F3", MAJOR, i, 81,
+                    f"Line too long ({len(expanded)} columns, max 80)"
+                )
+    
+    def check_function_length(self):
+        """C-F4: Vérifie la longueur des fonctions (max 20 lignes)"""
+        functions = self.extract_functions()
+        
+        for func_name, start_line, end_line in functions:
+            func_length = end_line - start_line - 1  # -1 pour exclure les accolades
+            
+            if func_length > 20:
+                self.add_violation(
+                    "C-F4", MAJOR, start_line, 1,
+                    f"Function '{func_name}' too long ({func_length} lines, max 20)"
+                )
+    
+    # ========================================================================
+    # C-L RULES - Layout inside function scope
+    # ========================================================================
+    
+    def check_indentation(self):
+        """C-L2: Vérifie l'indentation (4 espaces, pas de tabs)"""
+        for i, line in enumerate(self.lines, 1):
+            if '\t' in line:
+                self.add_violation(
+                    "C-L2", MINOR, i, line.index('\t') + 1,
+                    "Tabulation detected (use 4 spaces for indentation)"
+                )
+            
+            # Vérifier que l'indentation est un multiple de 4
+            leading_spaces = len(line) - len(line.lstrip(' '))
+            if leading_spaces % 4 != 0 and line.strip():
+                self.add_violation(
+                    "C-L2", MINOR, i, leading_spaces + 1,
+                    f"Incorrect indentation ({leading_spaces} spaces, must be multiple of 4)"
+                )
+    
+    def check_spaces(self):
+        """C-L3: Vérifie les espaces"""
+        for i, line in enumerate(self.lines, 1):
+            # Espace avant point-virgule
+            if re.search(r'\s+;', line):
+                self.add_violation(
+                    "C-L3", MINOR, i, 1,
+                    "Space before semicolon"
+                )
+            
+            # Espace après virgule
+            if re.search(r',\S', line) and not re.search(r',\s*\n', line):
+                match = re.search(r',\S', line)
+                if match:
+                    self.add_violation(
+                        "C-L3", MINOR, i, match.start() + 2,
+                        "Missing space after comma"
+                    )
+            
+            # Espace autour des opérateurs binaires
+            operators = [r'\+', r'-', r'\*', r'/', r'%', r'==', r'!=', 
+                        r'<=', r'>=', r'<', r'>', r'&&', r'\|\|', r'=']
+            for op in operators:
+                # Éviter les faux positifs (pointeurs, etc.)
+                if op == r'\*':
+                    continue
+                pattern = f'\\S{op}\\S'
+                if re.search(pattern, line):
+                    self.add_violation(
+                        "C-L3", MINOR, i, 1,
+                        f"Missing spaces around operator"
+                    )
+    
+    # ========================================================================
+    # C-C RULES - Control structures
+    # ========================================================================
+    
+    def check_goto(self):
+        """C-C3: Vérifie l'absence de goto"""
+        for i, line in enumerate(self.lines, 1):
+            if re.search(r'\bgoto\b', line):
+                self.add_violation(
+                    "C-C3", MAJOR, i, line.index('goto') + 1,
+                    "Use of 'goto' is forbidden"
+                )
+    
+    # ========================================================================
+    # HELPER FUNCTIONS
+    # ========================================================================
+    
+    def is_in_macro(self, line_num: int) -> bool:
+        """Vérifie si une ligne est dans une macro"""
+        if line_num < 1 or line_num > len(self.lines):
+            return False
+        return self.lines[line_num - 1].strip().startswith('#')
+    
+    def extract_functions(self) -> List[Tuple[str, int, int]]:
+        """Extrait les fonctions avec leur position"""
+        functions = []
+        in_function = False
+        brace_count = 0
+        func_start = 0
+        func_name = ""
+        
+        for i, line in enumerate(self.lines, 1):
+            # Détection de début de fonction
+            if not in_function and '{' in line and not self.is_in_comment(i):
+                # Chercher le nom de fonction dans les lignes précédentes
+                for j in range(max(0, i-3), i):
+                    if j < len(self.lines):
+                        match = re.search(r'\b([a-z_][a-z0-9_]*)\s*\(', self.lines[j])
+                        if match:
+                            func_name = match.group(1)
+                            func_start = i
+                            in_function = True
+                            brace_count = line.count('{') - line.count('}')
+                            break
+            
+            elif in_function:
+                brace_count += line.count('{') - line.count('}')
+                if brace_count == 0:
+                    functions.append((func_name, func_start, i))
+                    in_function = False
+        
+        return functions
+    
+    def is_in_comment(self, line_num: int) -> bool:
+        """Vérifie si une ligne est dans un commentaire (basique)"""
+        if line_num < 1 or line_num > len(self.lines):
+            return False
+        line = self.lines[line_num - 1].strip()
+        return line.startswith('//') or line.startswith('/*') or line.startswith('*')
+
+
+class MakefileAnalyzer:
+    """Analyseur pour les Makefiles"""
+    
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self.violations: List[Violation] = []
+        
+        with open(filepath, 'rb') as f:
+            self.raw_content = f.read()
+        
+        try:
+            self.content = self.raw_content.decode('utf-8')
+        except UnicodeDecodeError:
+            self.content = self.raw_content.decode('latin-1')
+        
+        self.lines = self.content.split('\n')
+    
+    def analyze(self) -> List[Violation]:
+        """Lance toutes les vérifications"""
+        self.check_header()
+        self.check_line_length()
+        
+        return self.violations
+    
+    def add_violation(self, rule: str, severity: str, line: int, 
+                     column: int, message: str):
+        """Ajoute une violation à la liste"""
+        self.violations.append(
+            Violation(rule, severity, self.filepath, line, column, message)
+        )
+    
+    def check_header(self):
+        """C-G1: Vérifie la présence du header Epitech pour Makefile"""
+        if not self.lines:
+            return
+        
+        expected_start = "##\n## EPITECH PROJECT"
+        actual_start = '\n'.join(self.lines[:2])
+        
+        if not actual_start.startswith(expected_start):
+            self.add_violation(
+                "C-G1", MAJOR, 1, 1,
+                "Missing or incorrect EPITECH header in Makefile"
+            )
+    
+    def check_line_length(self):
+        """C-F3: Vérifie la longueur des lignes"""
+        for i, line in enumerate(self.lines, 1):
+            expanded = line.replace('\t', '    ')
+            if len(expanded) > 80:
+                self.add_violation(
+                    "C-F3", MAJOR, i, 81,
+                    f"Line too long ({len(expanded)} columns, max 80)"
+                )
+
+
+# ============================================================================
+# MAIN CHECKER
+# ============================================================================
+
+class EpicCheck:
+    """Checker principal"""
+    
+    def __init__(self, paths: List[str]):
+        self.paths = paths
+        self.violations: List[Violation] = []
+        self.files_checked = 0
+    
+    def run(self) -> int:
+        """Exécute le checker et retourne le code de sortie"""
+        for path in self.paths:
+            self.check_path(path)
+        
+        # Afficher les résultats
+        self.print_results()
+        
+        # Retourner 84 si violations, 0 sinon
+        return 84 if self.violations else 0
+    
+    def check_path(self, path: str):
+        """Vérifie un chemin (fichier ou dossier)"""
+        p = Path(path)
+        
+        if p.is_file():
+            self.check_file(str(p))
+        elif p.is_dir():
+            self.check_directory(p)
+        else:
+            print(f"Warning: {path} is neither a file nor a directory", 
+                  file=sys.stderr)
+    
+    def check_directory(self, directory: Path):
+        """Vérifie tous les fichiers dans un dossier"""
+        for item in directory.rglob('*'):
+            if item.is_file():
+                self.check_file(str(item))
+    
+    def check_file(self, filepath: str):
+        """Vérifie un fichier individuel"""
+        # Ignorer certains fichiers
+        if any(filepath.endswith(ext) for ext in ['.o', '.a', '.so', '~']):
+            return
+        
+        if filepath.endswith('#'):
+            return
+        
+        self.files_checked += 1
+        
+        # Choisir l'analyseur approprié
+        if filepath.endswith('.c') or filepath.endswith('.h'):
+            analyzer = CFileAnalyzer(filepath)
+        elif filepath.endswith('Makefile') or 'Makefile' in filepath:
+            analyzer = MakefileAnalyzer(filepath)
+        else:
+            return
+        
+        violations = analyzer.analyze()
+        self.violations.extend(violations)
+    
+    def print_results(self):
+        """Affiche les résultats"""
+        if not self.violations:
+            print(f"{Colors.GREEN}✓ All {self.files_checked} files are compliant!{Colors.RESET}")
+            return
+        
+        # Trier par fichier, puis par ligne
+        self.violations.sort(key=lambda v: (v.file, v.line, v.column))
+        
+        # Grouper par fichier
+        current_file = None
+        for violation in self.violations:
+            if violation.file != current_file:
+                print(f"\n{Colors.BOLD}{violation.file}{Colors.RESET}")
+                current_file = violation.file
+            print(f"  {violation}")
+        
+        # Résumé
+        print(f"\n{Colors.RED}✗ Found {len(self.violations)} violation(s) in {self.files_checked} file(s){Colors.RESET}")
+        
+        # Compter par gravité
+        fatal = sum(1 for v in self.violations if v.severity == FATAL)
+        major = sum(1 for v in self.violations if v.severity == MAJOR)
+        minor = sum(1 for v in self.violations if v.severity == MINOR)
+        info = sum(1 for v in self.violations if v.severity == INFO)
+        
+        print(f"  {Colors.RED}{fatal} FATAL{Colors.RESET}, "
+              f"{Colors.RED}{major} MAJOR{Colors.RESET}, "
+              f"{Colors.YELLOW}{minor} MINOR{Colors.RESET}, "
+              f"{Colors.BLUE}{info} INFO{Colors.RESET}")
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='EpicCheck - Epitech Coding Style Checker',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  epiccheck .                    # Check current directory
+  epiccheck src/                 # Check src directory
+  epiccheck file.c               # Check single file
+  epiccheck src/ include/        # Check multiple directories
+
+Exit codes:
+  0  - All files are compliant
+  84 - Violations detected
+  1  - Execution error
+        """
+    )
+    
+    parser.add_argument(
+        'paths',
+        nargs='+',
+        help='Files or directories to check'
+    )
+    
+    parser.add_argument(
+        '-v', '--version',
+        action='version',
+        version='EpicCheck 1.0.0'
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        checker = EpicCheck(args.paths)
+        exit_code = checker.run()
+        sys.exit(exit_code)
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

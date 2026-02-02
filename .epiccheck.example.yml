@@ -1,0 +1,52 @@
+# EpicCheck Configuration File
+# Place this file as .epiccheck.yml in your project root
+
+# Directories to exclude from checking
+exclude:
+  - build/
+  - .git/
+  - tests/criterion/
+  - bonus/
+  
+# Files to exclude (regex patterns)
+exclude_files:
+  - ".*\\.o$"
+  - ".*\\.a$"
+  - ".*\\.so$"
+  - ".*~$"
+  - "^#.*#$"
+
+# Severity levels to display (FATAL, MAJOR, MINOR, INFO)
+show_severity:
+  - FATAL
+  - MAJOR
+  - MINOR
+  - INFO
+
+# Rules to disable (use with caution!)
+disabled_rules:
+  # - C-G1  # Uncomment to disable header check
+  # - C-F3  # Uncomment to disable line length check
+
+# Custom limits (override defaults)
+limits:
+  max_line_length: 80      # C-F3
+  max_function_length: 20  # C-F4
+  max_parameters: 4        # C-F5
+  max_functions_per_file: 10  # C-O3
+  indent_size: 4           # C-L2
+
+# Output options
+output:
+  colored: true            # Use colors in terminal
+  show_line_numbers: true  # Show line numbers
+  show_context: false      # Show code context (coming soon)
+  verbose: false           # Verbose output
+
+# CI/CD mode (stricter checks)
+ci_mode: false
+
+# Project info (for header check)
+project:
+  name: "my_project"
+  year: 2024

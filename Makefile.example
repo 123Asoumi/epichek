@@ -1,0 +1,57 @@
+##
+## EPITECH PROJECT, 2024
+## EpicCheck
+## File description:
+## Makefile with integrated coding style check
+##
+
+NAME    = my_program
+
+SRC     = src/main.c        \
+          src/utils.c       \
+          src/parser.c
+
+OBJ     = $(SRC:.c=.o)
+
+CFLAGS  = -Wall -Wextra -Werror -I./include
+
+CC      = gcc
+
+# Coding style checker
+CHECKER = python3 epiccheck
+
+all: style $(NAME)
+
+$(NAME): $(OBJ)
+	$(CC) $(OBJ) -o $(NAME)
+	@echo "✓ Build successful"
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(OBJ)
+	@echo "✓ Clean done"
+
+fclean: clean
+	rm -f $(NAME)
+	@echo "✓ Full clean done"
+
+re: fclean all
+
+# Coding style check
+style:
+	@echo "Checking coding style..."
+	@$(CHECKER) src/ include/ || (echo "✗ Coding style errors found" && exit 84)
+	@echo "✓ Coding style OK"
+
+# Force coding style check
+check:
+	$(CHECKER) .
+
+# Run tests (if you have them)
+tests_run:
+	@echo "Running tests..."
+	# Your test command here
+
+.PHONY: all clean fclean re style check tests_run
